@@ -87,7 +87,20 @@ class E5EmbeddingWrapper:
         except Exception as e:
             logger.error(f"❌ 模型加载失败: {str(e)}")
             raise
+            # e5嵌入模型必须要写的固定写法
+            """
+          e5模型训练时的特殊要求：
+            文档嵌入：需要 "passage: " 前缀
+            查询嵌入：需要 "query: " 前缀
+            性能保证：前缀确保模型按预期方式工作
+            "passage: " + document_text  # 文档嵌入
+            "query: " + query_text      # 查询嵌入
+            # 输入
+texts = ["这是文档内容", "另一个文档"]
 
+# 处理后
+texts = ["passage: 这是文档内容", "passage: 另一个文档"]
+            """
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Embed documents with 'passage: ' prefix for E5"""
         if self.is_e5_model:

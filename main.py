@@ -11,7 +11,7 @@ sys.path.insert(0, str(current_dir))
 # Enable truststore for Windows SSL certificate handling
 import truststore
 from dotenv import load_dotenv
-
+# Python SSL限制：Python默认不使用Windows证书存储
 truststore.inject_into_ssl()
 
 # 加载 .env 文件（现在从config目录加载）

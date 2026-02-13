@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="RAG API",
     description="Hybrid semantic + keyword search with reranking",
-    version="2.0",
+    version="1.0",
     lifespan=lifespan
 )
 

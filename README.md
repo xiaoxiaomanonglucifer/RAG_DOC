@@ -130,7 +130,7 @@ RAG_Automation-main/
 └── README.md              # 项目说明
 
 # 外部数据目录 (默认位置)
-G:/RAG_Automation-main/RAG_DATA/
+G:/RAG_DOC-main/RAG_DATA/
 ├── uploads/              # 临时上传文件
 ├── processed/            # 已处理文档
 ├── vector_db/            # ChromaDB向量数据库
@@ -171,9 +171,6 @@ HF_HOME=F:/HF_modals/huggingface
 TRANSFORMERS_CACHE=F:/HF_modals/transformers
 SENTENCE_TRANSFORMERS_HOME=F:/HF_modals/sentence-transformers
 
-# RAG数据目录配置（可选）
-RAG_DATA_ROOT=D:/MyRAGData
-```
 
 ## 🎯 使用指南
 
@@ -259,13 +256,5 @@ RAG_DATA_ROOT=D:/MyRAGData
 
 本项目采用MIT许可证 - 详见LICENSE文件
 
-## 📞 支持
-
-如有问题，请：
-1. 查看故障排除部分
-2. 搜索已有Issues
-3. 创建新的Issue并提供详细信息
-
----
 
 **注意**：首次使用时，系统会自动创建数据目录并下载必要的模型文件，请确保网络连接正常。
