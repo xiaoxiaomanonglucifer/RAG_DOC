@@ -37,20 +37,20 @@
 
 ### 1. 克隆项目
 ```bash
-git clone <repository-url>
-cd RAG_Automation-main
+git clone https://github.com/xiaoxiaomanonglucifer/RAG_DOC.git
+cd RAG_DOC-main
 ```
 
 ### 2. 创建Conda环境
 ```bash
 # 创建新的conda环境
-conda create -n rag_automation python=3.12 -y
+conda create -n RAG_DOC python=3.12 -y
 
 # 激活环境
 # Windows
-conda activate rag_automation
+conda activate RAG_DOC
 # Linux/macOS
-source activate rag_automation
+source activate RAG_DOC
 ```
 
 ### 3. 安装依赖
@@ -70,7 +70,7 @@ ollama pull qwen2.5:7b
 ```
 
 ### 5. 配置数据目录（可选）
-系统默认数据存储在 `G:/RAG_Automation-main/RAG_DATA/`，如需修改：
+系统默认数据存储在 `G:/RAG_DOC-main/RAG_DATA/`，如需修改：
 
 **方式1：环境变量**
 ```bash
@@ -144,7 +144,7 @@ G:/RAG_Automation-main/RAG_DATA/
 
 ```python
 # 数据目录配置
-DATA_ROOT = "G:/RAG_Automation-main/RAG_DATA"  # 可通过环境变量RAG_DATA_ROOT覆盖
+DATA_ROOT = "G:/RAG_DOC-main/RAG_DATA"  # 可通过环境变量RAG_DATA_ROOT覆盖
 
 # 模型配置
 EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"  # 嵌入模型
@@ -221,7 +221,7 @@ RAG_DATA_ROOT=D:/MyRAGData
 4. **ModuleNotFoundError**
    ```bash
    # 确保激活了conda环境
-   conda activate rag_automation
+   conda activate RAG_DOC
    
    # 重新安装依赖
    pip install -r config/requirements.txt
