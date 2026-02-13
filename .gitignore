@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Data directories (external)
+G:/RAG_Automation-main/RAG_DATA/
+RAG_DATA/
+
+# Local data (if using relative paths)
+data/
+
+# User data files (chat history and settings)
+G:/RAG_Automation-main/RAG_DATA/chat_history/
+G:/RAG_Automation-main/RAG_DATA/settings/
+**/chat_history/
+**/settings/
+
+# Environment files
+.env.local
+.env.production
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Model caches
+models/
+transformers_cache/
+sentence_transformers_cache/
+
+# Chat history and settings (user-specific)
+.rag_automation_chat_history.json
+.rag_automation_settings.json

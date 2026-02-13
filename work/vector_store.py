@@ -1,0 +1,625 @@
+"""
+Vector store operations - Optimized for RCA/Technical Documents
+"""
+from langchain_chroma import Chroma
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
+from pathlib import Path
+from datetime import datetime
+import logging
+import re
+
+from config.settings import settings
+from work.models import model_manager
+
+logger = logging.getLogger(__name__)
+
+# ============================================================
+# TEXT CLEANING PATTERNS FOR RCA DOCUMENTS
+# ============================================================
+NOISE_PATTERNS = [
+    r'Classified as Confidential\s*',
+    r'A0111-F0075-02\s*RCA & CAPA/PAA template\s*',
+    r'Attachment No\.\s*\d+\s*Page \d+ of \d+\s*',
+    r'Procedure No\.\s*A0111-P0050-03\s*',
+    r'^\s*Page\s*\d+\s*of\s*\d+\s*$',
+    r'©.*?Confidential.*?\n',
+]
+
+# Compile patterns for efficiency
+COMPILED_NOISE = [re.compile(p, re.IGNORECASE | re.MULTILINE) for p in NOISE_PATTERNS]
+
+
+def clean_rca_text(text: str) -> str:
+    """Remove repetitive headers, footers, and noise from RCA documents"""
+    cleaned = text
+
+    # Remove noise patterns
+    for pattern in COMPILED_NOISE:
+        cleaned = pattern.sub('', cleaned)
+
+    # Remove excessive whitespace
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    cleaned = re.sub(r' {2,}', ' ', cleaned)
+
+    # Remove lines that are just whitespace or very short
+    lines = cleaned.split('\n')
+    lines = [l for l in lines if len(l.strip()) > 2]
+    cleaned = '\n'.join(lines)
+
+    return cleaned.strip()
+
+
+# ============================================================
+# FILENAME TO AR# MAPPING (Guaranteed AR# for all chunks)
+# ============================================================
+FILENAME_TO_AR = {
+    # Numeric AR files
+    '114628.pdf': ('114628', 'UCC1 Cata-cut due to TAHH TE-7004-7A Bearing Melt Pump Motor'),
+    '115700.pdf': ('115700', 'Loss additive due to master mix feeder equipment problem'),
+    '235.pdf': ('235', 'RCA Document 235'),
+    '236.pdf': ('236', 'RCA Document 236'),
+    '319_Notes.pdf': ('319', 'RCA Notes 319'),
+    # Named AR files
+    'AROL 418 K-4003 DGS Contaminated by lube oil.pdf': ('418', 'Reactor extend shutdown - DGS K-4003 contaminated by lube oil'),
+    # EPR format files
+    'EPR-F2421-2023-06-1.pdf': ('EPR-F2421-2023-06-1', 'EPR Report June 2023'),
+    'EPR-F2421-2023-07-2.pdf': ('EPR-F2421-2023-07-2', 'EPR Report July 2023'),
+    'EPR-F2423-2023-06-1.pdf': ('EPR-F2423-2023-06-1', 'UCC1 Down Rate due to valve PDS#2 F broken'),
+    'EPR-F2423-2023-07-1.pdf': ('EPR-F2423-2023-07-1', 'EPR Report July 2023'),
+    'EPR-F2423-2023-08-1.pdf': ('EPR-F2423-2023-08-1', 'EPR Report August 2023'),
+}
+
+
+def extract_rca_metadata(text: str, filename: str) -> dict:
+    """Extract key metadata from RCA document text"""
+    metadata = {}
+
+    # First: Try to get AR# from filename mapping (guaranteed)
+    if filename in FILENAME_TO_AR:
+        ar_num, ar_title = FILENAME_TO_AR[filename]
+        metadata['ar_number'] = ar_num
+        metadata['ar_title'] = ar_title
+        logger.info(f"  📋 AR# from mapping: {ar_num}")
+    else:
+        # Try to extract from filename directly
+        name_only = filename.replace('.pdf', '')
+
+        # Numeric filename = AR number
+        if name_only.isdigit():
+            metadata['ar_number'] = name_only
+            metadata['ar_title'] = f'RCA Document {name_only}'
+            logger.info(f"  📋 AR# from numeric filename: {name_only}")
+        # EPR/OPR format
+        elif name_only.startswith(('EPR-', 'OPR-')):
+            metadata['ar_number'] = name_only
+            metadata['ar_title'] = name_only
+            logger.info(f"  📋 AR# from EPR/OPR filename: {name_only}")
+        # Try to extract leading number
+        else:
+            num_match = re.match(r'^(\d+)', name_only)
+            if num_match:
+                metadata['ar_number'] = num_match.group(1)
+                metadata['ar_title'] = name_only
+                logger.info(f"  📋 AR# from filename prefix: {num_match.group(1)}")
+
+        # Fallback: Extract AR Number from text (only if not already found)
+        if not metadata.get('ar_number'):
+            ar_patterns = [
+                r'AR\s*#\s*(\d+)',                           # AR# 117422
+                r'AR\s*Number\s*[:\s]*([A-Z0-9\-]+)',       # AR Number: 117422
+                r'AR\s*No\.?\s*[:\s]*([A-Z0-9\-]+)',        # AR No: 117422
+                r'([A-Z]{2,3}-F\d{4}-\d{4}-\d{2}-\d+)',     # EPR-F2423-2023-06-1
+                r'([A-Z]{2,3}-F\d{4}-\d{4}-\d{2})',         # OPR-F2222-2023-07
+            ]
+
+            for pattern in ar_patterns:
+                ar_match = re.search(pattern, text, re.IGNORECASE)
+                if ar_match:
+                    metadata['ar_number'] = ar_match.group(1).strip()
+                    logger.info(f"  📋 AR# from text: {metadata['ar_number']}")
+                    break
+
+    # Extract Title from text (if not already set)
+    if not metadata.get('ar_title'):
+        title_match = re.search(r'Title\s*[:\s]*([^\n]+)', text, re.IGNORECASE)
+        if title_match:
+            title = title_match.group(1).strip()
+            title = re.sub(r'^[:\s]+', '', title)
+            if len(title) > 10:
+                metadata['ar_title'] = title[:200]
+
+    # Extract Date Occurrence
+    date_match = re.search(r'Date\s*Occurrence\s*[:\s]*([^\n]+)', text, re.IGNORECASE)
+    if date_match:
+        metadata['date_occurrence'] = date_match.group(1).strip()
+
+    # Extract Immediate Action
+    action_match = re.search(r'Immediate\s*Action\s*[:\s]*([^\n]+)', text, re.IGNORECASE)
+    if action_match:
+        metadata['immediate_action'] = action_match.group(1).strip()[:200]
+
+    return metadata
+
+class VectorStoreManager:
+    """Manages ChromaDB vector store"""
+    
+    def __init__(self):
+        self.vectorstore = None
+        # 按 collection_name 缓存多个 Chroma 实例
+        self._stores: dict[str, Chroma] = {}
+        self.text_splitter = None
+        
+    def initialize(self):
+        """Initialize vector store and text splitter"""
+
+        # OPTIMIZED: Technical document-aware chunking
+        # Larger chunks with smart boundaries to preserve context
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=settings.CHUNK_SIZE,
+            chunk_overlap=settings.CHUNK_OVERLAP,
+            separators=[
+                "\n## ",            # Markdown headers (if present)
+                "\n### ",           # Subheaders
+                "\n\n\n",           # Triple newline (major sections)
+                "\n\n",             # Double newline (paragraphs)
+                "\nStep ",          # Procedure steps
+                "\n\nStep ",        # Steps with spacing
+                "\n• ",             # Bullet points
+                "\n- ",             # Dashed lists
+                "\n",               # Single newline
+                ". ",               # Sentences
+                " ",                # Words
+            ],
+            keep_separator=True,    # Keep separators for context
+            length_function=len,
+            is_separator_regex=False
+        )
+
+        # Initialize default ChromaDB vector store (默认知识库)
+        logger.info("🗄️  Initializing ChromaDB vector store (default collection)...")
+        default_store = Chroma(
+            persist_directory=str(settings.CHROMA_PATH),
+            embedding_function=model_manager.embeddings,
+            collection_name=settings.COLLECTION_NAME,
+            collection_metadata={"hnsw:space": "cosine"}  # Cosine similarity
+        )
+        self.vectorstore = default_store
+        self._stores[settings.COLLECTION_NAME] = default_store
+
+        # 尝试发现已经存在的其他 collection（多知识库兼容）
+        try:
+            client = default_store._client  # type: ignore[attr-defined]
+            existing = client.list_collections()
+            for coll in existing:
+                # chromadb Collection 对象通常有 .name 属性
+                coll_name = getattr(coll, "name", None) or getattr(coll, "_name", None)
+                if not coll_name or coll_name == settings.COLLECTION_NAME:
+                    continue
+                if coll_name in self._stores:
+                    continue
+                logger.info(f"🗄️  Found existing collection: {coll_name}")
+                self._stores[coll_name] = Chroma(
+                    persist_directory=str(settings.CHROMA_PATH),
+                    embedding_function=model_manager.embeddings,
+                    collection_name=coll_name,
+                    collection_metadata={"hnsw:space": "cosine"}
+                )
+        except Exception as e:
+            logger.warning(f"⚠️ Unable to list existing collections: {e}")
+
+        logger.info("✓ Vector store initialized")
+
+    # ------------------------------------------------------------
+    # 多知识库辅助方法
+    # ------------------------------------------------------------
+    def get_store_for_knowledge_base(self, knowledge_base: str | None = None) -> Chroma:
+        """
+        根据知识库名称获取/创建对应的 Chroma collection。
+        - knowledge_base 为 None 或 'default' 时，映射到 settings.COLLECTION_NAME（旧逻辑）
+        - 其他名称直接作为 collection_name 使用
+        """
+        if not knowledge_base or knowledge_base == "default":
+            collection_name = settings.COLLECTION_NAME
+        else:
+            collection_name = knowledge_base
+
+        if collection_name in self._stores:
+            return self._stores[collection_name]
+
+        logger.info(f"🗄️  Creating new collection for knowledge base: {collection_name}")
+        store = Chroma(
+            persist_directory=str(settings.CHROMA_PATH),
+            embedding_function=model_manager.embeddings,
+            collection_name=collection_name,
+            collection_metadata={"hnsw:space": "cosine"}
+        )
+        self._stores[collection_name] = store
+        return store
+
+    def list_knowledge_bases(self) -> list[dict]:
+        """
+        列出当前所有已存在的知识库名称。
+        - 'default' 始终存在，对应 settings.COLLECTION_NAME
+        - 其他 collection_name 原样返回
+        """
+        names = set()
+        names.add("default")
+        try:
+            # 使用默认 store 的 client 列出 collection
+            if self.vectorstore is not None:
+                client = self.vectorstore._client  # type: ignore[attr-defined]
+                for coll in client.list_collections():
+                    coll_name = getattr(coll, "name", None) or getattr(coll, "_name", None)
+                    if not coll_name or coll_name == settings.COLLECTION_NAME:
+                        continue
+                    names.add(coll_name)
+        except Exception as e:
+            logger.warning(f"⚠️ Unable to list knowledge bases: {e}")
+
+        return [{"name": name} for name in sorted(names)]
+
+    def get_count(self, knowledge_base: str | None = None) -> int:
+        """Get number of chunks in database"""
+        try:
+            store = self.get_store_for_knowledge_base(knowledge_base)
+            return store._collection.count()
+        except Exception:
+            return 0
+    
+    def get_all_documents(self, knowledge_base: str | None = None) -> list[Document]:
+        """Retrieve all documents from vector store"""
+        
+        try:
+            store = self.get_store_for_knowledge_base(knowledge_base)
+            collection = store._collection
+            results = collection.get()
+            
+            documents = []
+            for i, doc_text in enumerate(results['documents']):
+                metadata = results['metadatas'][i] if results['metadatas'] else {}
+                documents.append(Document(
+                    page_content=doc_text,
+                    metadata=metadata
+                ))
+            
+            return documents
+        except Exception as e:
+            logger.warning(f"Could not load documents: {e}")
+            return []
+    
+    def _is_valid_table(self, table: list, headers: list) -> bool:
+        """Check if extracted table has meaningful structure (not RCA form garbage)"""
+        if not table or len(table) < 2:
+            return False
+
+        # Check if headers are meaningful (not Col0, Col1, etc.)
+        generic_headers = sum(1 for h in headers if re.match(r'^Col\d+$', str(h)))
+        if generic_headers > len(headers) * 0.5:  # More than 50% generic
+            return False
+
+        # Check if table has reasonable dimensions
+        if len(headers) > 20:  # Too many columns = likely form extraction garbage
+            return False
+
+        # Check if content is meaningful
+        meaningful_cells = 0
+        total_cells = 0
+        for row in table[1:]:
+            for cell in row:
+                total_cells += 1
+                if cell and len(str(cell).strip()) > 3:
+                    meaningful_cells += 1
+
+        if total_cells > 0 and meaningful_cells / total_cells < 0.3:  # Less than 30% meaningful
+            return False
+
+        return True
+
+    def _extract_tables_from_pdf(self, filepath: str, filename: str) -> list[Document]:
+        """Extract tables from PDF using pdfplumber - with quality filtering"""
+        try:
+            import pdfplumber
+        except ImportError:
+            logger.warning("  ⚠️ pdfplumber not installed, skipping table extraction")
+            return []
+
+        table_chunks = []
+        logger.info("  📊 Extracting tables with pdfplumber...")
+
+        try:
+            with pdfplumber.open(filepath) as pdf:
+                for page_num, page in enumerate(pdf.pages, 1):
+                    tables = page.extract_tables()
+
+                    if tables:
+                        for table_idx, table in enumerate(tables):
+                            if table and len(table) > 1:  # Has header + data
+                                # Get headers
+                                headers = table[0] if table[0] else [f"Col{i}" for i in range(len(table[1]))]
+                                headers = [str(h).strip() if h else f"Col{i}" for i, h in enumerate(headers)]
+
+                                # Skip garbage tables (RCA forms, etc.)
+                                if not self._is_valid_table(table, headers):
+                                    continue
+
+                                # Build markdown table
+                                md_lines = [
+                                    f"## Table from {filename} - Page {page_num}, Table {table_idx + 1}",
+                                    "",
+                                    "| " + " | ".join(headers) + " |",
+                                    "| " + " | ".join(["---"] * len(headers)) + " |"
+                                ]
+
+                                row_count = 0
+                                for row in table[1:]:
+                                    if row and any(cell for cell in row):
+                                        cells = [str(cell).strip() if cell else "" for cell in row]
+                                        # Pad or truncate to match headers
+                                        while len(cells) < len(headers):
+                                            cells.append("")
+                                        cells = cells[:len(headers)]
+                                        md_lines.append("| " + " | ".join(cells) + " |")
+                                        row_count += 1
+
+                                if row_count > 0:
+                                    table_content = "\n".join(md_lines)
+                                    chunk = Document(
+                                        page_content=table_content,
+                                        metadata={
+                                            'filename': filename,
+                                            'page': page_num,
+                                            'table_index': table_idx + 1,
+                                            'content_type': 'structured_table',
+                                            'row_count': row_count,
+                                            'upload_date': datetime.now().isoformat()
+                                        }
+                                    )
+                                    table_chunks.append(chunk)
+
+            logger.info(f"  ✓ Extracted {len(table_chunks)} valid tables (filtered garbage)")
+        except Exception as e:
+            logger.warning(f"  ⚠️ Table extraction failed: {e}")
+
+        return table_chunks
+
+    def ingest_document(self, filepath: str, filename: str, password: str = None, knowledge_base: str | None = None) -> dict:
+        """Process and ingest document (PDF, Word, Excel) into vector store
+
+        For PDFs: Automatically extracts tables as structured markdown + regular text
+        """
+
+        file_extension = Path(filename).suffix.lower()
+
+        logger.info(f"⏳ Loading {file_extension} file: {filename}")
+
+        all_chunks = []
+        tables_extracted = 0
+
+        # === PDF PROCESSING ===
+        if file_extension == '.pdf':
+            # STEP 1: Extract structured tables (disabled for RCA forms - creates garbage)
+            if settings.EXTRACT_TABLES:
+                table_chunks = self._extract_tables_from_pdf(filepath, filename)
+                all_chunks.extend(table_chunks)
+                tables_extracted = len(table_chunks)
+            else:
+                logger.info("  ℹ️ Table extraction disabled (RCA mode)")
+                tables_extracted = 0
+
+            # STEP 2: Extract regular text with PyMuPDF (for non-table content)
+            try:
+                from langchain_community.document_loaders import PyMuPDFLoader
+                loader = PyMuPDFLoader(filepath)
+                logger.info("  📄 Extracting text with PyMuPDF...")
+            except ImportError:
+                from langchain_community.document_loaders import PyPDFLoader
+                loader = PyPDFLoader(filepath)
+                logger.info("  📄 Extracting text with PyPDF...")
+
+            docs = loader.load()
+            pages = len(docs)
+
+            # Check if text extraction is empty (image-based PDF)
+            total_text = sum(len(doc.page_content.strip()) for doc in docs)
+            if total_text < 100:
+                logger.warning(f"  ⚠️ PDF appears to be image-based (only {total_text} chars)")
+                logger.info("  🔄 Attempting OCR extraction...")
+
+                try:
+                    from pdf2image import convert_from_path
+                    import pytesseract
+
+                    # Convert PDF to images and OCR (with password support)
+                    pdf2image_kwargs = {}
+                    if password:
+                        # pdf2image uses 'userpw' parameter for password
+                        pdf2image_kwargs['userpw'] = password
+                        logger.info("    Using password for PDF conversion...")
+
+                    images = convert_from_path(filepath, **pdf2image_kwargs)
+                    ocr_docs = []
+
+                    for i, image in enumerate(images):
+                        logger.info(f"    OCR processing page {i+1}/{len(images)}...")
+                        text = pytesseract.image_to_string(image, lang='eng')
+
+                        if text.strip():  # Only add if text found
+                            ocr_docs.append(Document(
+                                page_content=text,
+                                metadata={
+                                    'filename': filename,
+                                    'page': i + 1,
+                                    'extraction_method': 'ocr'
+                                }
+                            ))
+
+                    if ocr_docs:
+                        docs = ocr_docs
+                        pages = len(docs)
+                        total_ocr_text = sum(len(d.page_content) for d in docs)
+                        logger.info(f"  ✓ OCR extraction successful: {pages} pages, {total_ocr_text} chars")
+                    else:
+                        logger.error("  ❌ OCR found no text")
+                        raise ValueError("Could not extract text from PDF (neither direct nor OCR)")
+
+                except ImportError as e:
+                    logger.error(f"  ❌ OCR libraries not installed: {e}")
+                    logger.error("  💡 Install: pip install pytesseract pdf2image")
+                    logger.error("  💡 Also install Tesseract: brew install tesseract poppler")
+                    raise ValueError("PDF appears to be image-based but OCR not available")
+                except Exception as e:
+                    logger.error(f"  ❌ OCR failed: {e}")
+                    raise ValueError(f"OCR extraction failed: {str(e)}")
+
+            # Clean text and add metadata
+            logger.info("  🧹 Cleaning text and extracting metadata...")
+
+            # Extract document-level metadata from first few pages
+            full_text = "\n".join([doc.page_content for doc in docs[:5]])
+            logger.info(f"  🔍 Extracting metadata for: '{filename}'")
+            doc_metadata = extract_rca_metadata(full_text, filename)
+            logger.info(f"  🔍 Extracted metadata: {doc_metadata}")
+
+            if doc_metadata.get('ar_number'):
+                logger.info(f"  📋 Found AR#: {doc_metadata.get('ar_number')}")
+            if doc_metadata.get('ar_title'):
+                logger.info(f"  📋 Title: {doc_metadata.get('ar_title')[:50]}...")
+
+            for i, doc in enumerate(docs):
+                # Clean the text content
+                doc.page_content = clean_rca_text(doc.page_content)
+
+                # Add metadata
+                doc.metadata['filename'] = filename
+                doc.metadata['file_type'] = file_extension
+                doc.metadata['content_type'] = 'text'
+                doc.metadata['upload_date'] = datetime.now().isoformat()
+                doc.metadata['page'] = i + 1
+                doc.metadata['total_pages'] = pages
+
+                # Add document-level metadata to each chunk
+                doc.metadata.update(doc_metadata)
+
+            # Filter out empty docs after cleaning
+            docs = [d for d in docs if len(d.page_content.strip()) > 50]
+
+            # Chunk text content
+            text_chunks = self.text_splitter.split_documents(docs)
+
+            # ALWAYS prepend AR# context to each chunk for better retrieval
+            # Extract AR# from filename (most reliable)
+            name_only = filename.replace('.pdf', '').replace('.PDF', '')
+
+            # Determine AR number from filename
+            if name_only.isdigit():
+                ar_num = name_only
+                ar_title = doc_metadata.get('ar_title', f'RCA Document {name_only}')
+            elif name_only.startswith(('EPR-', 'OPR-', 'AROL')):
+                ar_num = name_only.split()[0] if ' ' in name_only else name_only
+                ar_title = doc_metadata.get('ar_title', name_only)
+            elif filename in FILENAME_TO_AR:
+                ar_num, ar_title = FILENAME_TO_AR[filename]
+            else:
+                # Try to extract number from start of filename
+                num_match = re.match(r'^(\d+)', name_only)
+                if num_match:
+                    ar_num = num_match.group(1)
+                    ar_title = name_only
+                else:
+                    ar_num = name_only
+                    ar_title = name_only
+
+            # Prepend context to ALL chunks - create new Documents
+            context_prefix = f"[AR# {ar_num}] {ar_title}\n\n"
+            logger.info(f"  📌 Adding prefix: {context_prefix.strip()}")
+
+            prefixed_chunks = []
+            for chunk in text_chunks:
+                new_content = context_prefix + chunk.page_content
+                new_chunk = Document(
+                    page_content=new_content,
+                    metadata=chunk.metadata.copy()
+                )
+                prefixed_chunks.append(new_chunk)
+
+            logger.info(f"  ✅ Created {len(prefixed_chunks)} prefixed chunks")
+
+            all_chunks.extend(prefixed_chunks)
+            logger.info(f"  ✓ Created {len(text_chunks)} text chunks (cleaned)")
+
+        # === NON-PDF FILES ===
+        elif file_extension in ['.docx', '.doc']:
+            from langchain_community.document_loaders import Docx2txtLoader
+            loader = Docx2txtLoader(filepath)
+            docs = loader.load()
+            pages = len(docs)
+
+            for i, doc in enumerate(docs):
+                doc.metadata['filename'] = filename
+                doc.metadata['file_type'] = file_extension
+                doc.metadata['upload_date'] = datetime.now().isoformat()
+
+            text_chunks = self.text_splitter.split_documents(docs)
+            all_chunks.extend(text_chunks)
+
+        elif file_extension in ['.xlsx', '.xls']:
+            from langchain_community.document_loaders import UnstructuredExcelLoader
+            loader = UnstructuredExcelLoader(filepath, mode="elements")
+            docs = loader.load()
+            pages = len(docs)
+
+            for i, doc in enumerate(docs):
+                doc.metadata['filename'] = filename
+                doc.metadata['file_type'] = file_extension
+                doc.metadata['upload_date'] = datetime.now().isoformat()
+
+            all_chunks.extend(docs)  # Excel elements are already chunked
+
+        else:
+            raise ValueError(f"Unsupported file type: {file_extension}")
+
+        # Add chunk-specific metadata
+        for i, chunk in enumerate(all_chunks):
+            chunk.metadata['chunk_id'] = i
+            chunk.metadata['chunk_size'] = len(chunk.page_content)
+
+        chunk_count = len(all_chunks)
+        logger.info(f"📊 Total: {tables_extracted} tables + {chunk_count - tables_extracted} text chunks = {chunk_count} chunks")
+
+        # Add to vectorstore（按知识库写入对应 collection）
+        logger.info(f"⏳ Adding to vector database...")
+        if all_chunks:
+            store = self.get_store_for_knowledge_base(knowledge_base)
+            store.add_documents(all_chunks)
+
+        new_total = self.get_count(knowledge_base=knowledge_base)
+        logger.info(f"✅ Total chunks in database: {new_total}")
+
+        return {
+            "tables_extracted": tables_extracted,
+            "text_chunks": chunk_count - tables_extracted,
+            "total_chunks_added": chunk_count,
+            "total_in_database": new_total,
+            "file_type": file_extension
+        }
+    
+    def get_retriever(self, k: int = None, knowledge_base: str | None = None):
+        """Get basic vector retriever"""
+        k = k or settings.TOP_K
+        store = self.get_store_for_knowledge_base(knowledge_base)
+        return store.as_retriever(search_kwargs={"k": k})
+
+    def clear_database(self, knowledge_base: str | None = None):
+        """Clear all documents from vector store"""
+        logger.info("🗑️  Clearing vector database...")
+        # Get all IDs and delete them
+        store = self.get_store_for_knowledge_base(knowledge_base)
+        collection = store._collection
+        results = collection.get()
+        if results['ids']:
+            collection.delete(ids=results['ids'])
+        logger.info("✅ Database cleared")
+
+# Global vector store manager
+vector_store = VectorStoreManager()
