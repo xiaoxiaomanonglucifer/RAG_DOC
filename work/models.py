@@ -1,6 +1,7 @@
 """
 Machine learning models initialization - OPTIMIZED FOR QWEN2.5:14B + E5 EMBEDDINGS
 """
+import torch
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.llms import Ollama
 from langchain_core.prompts import PromptTemplate
@@ -8,56 +9,14 @@ from sentence_transformers import CrossEncoder, SentenceTransformer
 from typing import List
 import logging
 import os
-
-import threading
-
 from config.settings import settings, RAG_PROMPT_TEMPLATE
-
 logger = logging.getLogger(__name__)
 
-# 自动应用环境变量设置
-def setup_model_paths():
-    """Setup model cache paths from environment variables"""
-    hf_home = os.getenv('HF_HOME')
-    if hf_home:
-        os.environ.setdefault('TRANSFORMERS_CACHE', f"{hf_home}/transformers")
-        os.environ.setdefault('SENTENCE_TRANSFORMERS_HOME', f"{hf_home}/sentence-transformers")
-        logger.info(f"Using custom model cache: {hf_home}")
+"""
+导入模型 √
+"""
 
-setup_model_paths()
-
-# 添加下载进度跟踪
-class DownloadProgress:
-    def __init__(self):
-        self.lock = threading.Lock()
-        self.progress = {}
-    
-    def callback(self, progress):
-        with self.lock:
-            repo_id = progress.get('repo_id', 'unknown')
-            if repo_id not in self.progress:
-                self.progress[repo_id] = {'files': {}, 'total': 0, 'downloaded': 0}
-            
-            file_name = progress.get('file_name', 'unknown')
-            downloaded = progress.get('downloaded', 0)
-            total = progress.get('total', 1)
-            
-            self.progress[repo_id]['files'][file_name] = {
-                'downloaded': downloaded,
-                'total': total,
-                'percentage': (downloaded / total * 100) if total > 0 else 0
-            }
-            
-            # 计算总体进度
-            total_files = sum(f['total'] for f in self.progress[repo_id]['files'].values())
-            downloaded_files = sum(f['downloaded'] for f in self.progress[repo_id]['files'].values())
-            overall_percentage = (downloaded_files / total_files * 100) if total_files > 0 else 0
-            
-            logger.info(f"📥 下载进度 [{repo_id}]: {overall_percentage:.1f}% "
-                       f"({downloaded_files}/{total_files} bytes)")
-
-download_tracker = DownloadProgress()
-
+#e5嵌入模型使用这个包装器
 class E5EmbeddingWrapper:
     """
     Custom wrapper for E5 embeddings that handles query/passage prefixing.
@@ -65,7 +24,6 @@ class E5EmbeddingWrapper:
     - Queries prefixed with "query: "
     - Documents prefixed with "passage: "
     """
-
     def __init__(self, model_name: str):
         logger.info(f"🚀 开始加载嵌入模型: {model_name}")
         
@@ -117,7 +75,7 @@ texts = ["passage: 这是文档内容", "passage: 另一个文档"]
 
 
 class ModelManager:
-    """Manages all ML models - optimized for qwen2.5:14b"""
+    """Manages all ML models - optimized for qwen2.5:7b"""
 
     def __init__(self):
         self.embeddings = None
@@ -160,7 +118,9 @@ class ModelManager:
         if settings.USE_RERANKING:
             logger.info(f"🎯 正在加载重排序模型: {settings.RERANKER_MODEL}")
             logger.info("  📥 从HuggingFace下载/加载重排序模型...")
-            self.reranker = CrossEncoder(settings.RERANKER_MODEL)
+            self.reranker = CrossEncoder(settings.RERANKER_MODEL,
+            device="cuda" if torch.cuda.is_available() else "cpu"
+            )
             logger.info("✓ 重排序模型加载完成")
 
         self.prompt = PromptTemplate(
@@ -172,26 +132,5 @@ class ModelManager:
         logger.info("🎉 所有模型初始化完成！")
         logger.info("="*60)
 
-    def rerank_documents(self, query: str, documents, top_k: int = None):
-        """Rerank documents using cross-encoder"""
-
-        if not self.reranker or not documents:
-            return documents
-
-        top_k = top_k or settings.TOP_K
-
-        # Create query-document pairs
-        pairs = [[query, doc.page_content] for doc in documents]
-
-        # Get relevance scores
-        scores = self.reranker.predict(pairs)
-
-        # Sort by score
-        doc_score_pairs = list(zip(documents, scores))
-        doc_score_pairs.sort(key=lambda x: x[1], reverse=True)
-
-        # Return just documents (not tuples) for compatibility
-        return [doc for doc, score in doc_score_pairs[:top_k]]
-
-# Global model manager
+#全局模型管理器
 model_manager = ModelManager()

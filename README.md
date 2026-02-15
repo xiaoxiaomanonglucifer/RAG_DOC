@@ -75,7 +75,7 @@ ollama pull qwen2.5:7b
 **方式1：环境变量**
 ```bash
 # Windows (PowerShell)
-$env:RAG_DATA_ROOT = "D:/MyRAGData"
+$env:RAG_DATA_ROOT=G:/RAG_Automation-main/RAG_DATA
 
 # Linux/macOS
 export RAG_DATA_ROOT=/home/user/rag_data
@@ -84,7 +84,7 @@ export RAG_DATA_ROOT=/home/user/rag_data
 **方式2：修改.env文件**
 ```bash
 # 在 config/.env 中添加
-RAG_DATA_ROOT=D:/MyRAGData
+RAG_DATA_ROOT=G:/RAG_Automation-main/RAG_DATA
 ```
 
 ### 6. 启动服务
@@ -93,6 +93,8 @@ RAG_DATA_ROOT=D:/MyRAGData
 ```bash
 python main.py
 ```
+(魔法)
+访问http://127.0.0.1:8000/docs查看接口
 
 **启动Web界面**（新终端）
 ```bash
@@ -192,69 +194,23 @@ SENTENCE_TRANSFORMERS_HOME=F:/HF_modals/sentence-transformers
 - 选择LLM模型
 - 设置界面主题
 
-## 🔧 故障排除
 
-### 常见问题
+非GUI的完整执行流程
+1. main.py (第30行) → uvicorn.run() 
+   ↓
+2. main.py (第22行) → from work.api import app
+   ↓
+3. work/api.py (第21-38行) → @asynccontextmanager lifespan()
+   ↓
+4. work/api.py (第27行) → model_manager.initialize()
+   ↓
+5. work/models.py (第115行) → ModelManager.initialize()
+   ↓
+6. work/api.py (第30行) → vector_store.initialize()
+   ↓
+7. work/api.py (第33行) → retriever.initialize()
+   ↓
+8. 启动完成，API服务就绪
 
-1. **模型下载失败**
-   ```bash
-   # 设置国内镜像源
-   export HF_ENDPOINT=https://hf-mirror.com
-   ```
-
-2. **Ollama连接失败**
-   ```bash
-   # 确保Ollama服务运行
-   ollama list
-   ollama pull qwen2.5:7b
-   ```
-
-3. **端口占用**
-   ```bash
-   # 修改端口配置
-   # 在config/settings.py中修改API_PORT
-   ```
-
-4. **ModuleNotFoundError**
-   ```bash
-   # 确保激活了conda环境
-   conda activate RAG_DOC
-   
-   # 重新安装依赖
-   pip install -r config/requirements.txt
-   ```
-
-5. **数据目录权限问题**
-   ```bash
-   # 确保数据目录有写入权限
-   # 或修改RAG_DATA_ROOT环境变量
-   ```
-
-## 📊 性能优化建议
-
-1. **硬件要求**
-   - 推荐16GB+ RAM用于大文档处理
-   - GPU加速可显著提升嵌入和检索速度
-
-2. **模型选择**
-   - 小规模数据：qwen2.5:7b
-   - 大规模数据：考虑更大模型
-
-3. **检索调优**
-   - 根据文档类型调整CHUNK_SIZE
-   - 平衡语义和关键词权重
-
-## 🤝 贡献指南
-
-1. Fork项目
-2. 创建功能分支
-3. 提交更改
-4. 推送到分支
-5. 创建Pull Request
-
-## 📄 许可证
-
-本项目采用MIT许可证 - 详见LICENSE文件
-
-
-**注意**：首次使用时，系统会自动创建数据目录并下载必要的模型文件，请确保网络连接正常。
+main.py->api.py(models.py、vector_store.py、retriever.py) 
+api.py里的代码学习fastapi框架

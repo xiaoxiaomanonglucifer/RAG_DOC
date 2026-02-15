@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import shutil
 import logging
@@ -15,36 +14,36 @@ from config.settings import settings
 from work.vector_store import vector_store
 from work.retrieval import retriever
 from work.models import model_manager
-
 logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize models, vector store, and retriever on startup"""
-    logger.info("🚀 Starting RAG API server...")
+    """初始化模型、向量存储和检索器"""
+    logger.info("🚀 嘟嘟嘟 Starting RAG API server...")
 
-    # Initialize models (embeddings, LLM, reranker)
+    # 初始化模型 (embeddings, LLM, reranker)
     model_manager.initialize()
 
-    # Initialize vector store
+    # 初始化向量存储
     vector_store.initialize()
 
-    # Initialize retriever
+    # 初始化检索器
     retriever.initialize()
 
     logger.info(f"✅ Server ready with {vector_store.get_count()} chunks indexed")
     yield
-    # Cleanup on shutdown (if needed)
+    # 关闭时清理 (如果需要)
     logger.info("👋 Shutting down RAG API server...")
 
 app = FastAPI(
     title="RAG API",
-    description="Hybrid semantic + keyword search with reranking",
+    description="混合语义和关键词搜索，支持重排序",
     version="1.0",
     lifespan=lifespan
 )
 
-# CORS support for n8n
+# CORS support for n8n  
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allow all origins for n8n
@@ -52,10 +51,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+# OpenAI兼容接口
 app.include_router(openai_router)
 
-# Serve PDF files for source linking
+
+# 提供PDF文件用于查看来源
 @app.get("/pdf/{filename}")
 async def get_pdf(filename: str):
     """Serve PDF file for viewing sources"""
@@ -110,7 +110,7 @@ async def ingest_document(
         password: Optional password for encrypted PDFs (use Form field)
     """
 
-    # Validate file type
+    #   验证文件类型
     allowed_extensions = ['.pdf', '.docx', '.doc', '.xlsx', '.xls']
     file_extension = Path(file.filename).suffix.lower()
 
@@ -130,12 +130,12 @@ async def ingest_document(
     temp_filepath = Path(settings.UPLOAD_DIR) / file.filename
 
     try:
-        # Save file
+        # 保存文件
         logger.info("⏳ Saving file...")
         with open(temp_filepath, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        # Process document (supports PDF, DOCX, XLSX)
+        # 处理文档 (支持 PDF, DOCX, XLSX)
         kb = knowledge_base or "default"
         result = vector_store.ingest_document(
             str(temp_filepath),
@@ -144,12 +144,12 @@ async def ingest_document(
             knowledge_base=kb,
         )
 
-        # Move to processed
+        # 移动到已处理目录
         processed_path = Path(settings.PROCESSED_DIR) / file.filename
         shutil.move(temp_filepath, processed_path)
         logger.info(f"📁 Moved to: {processed_path}")
 
-        # Rebuild BM25 with new docs（仅默认知识库重建混合检索索引）
+        # 重建BM25索引（仅默认知识库）
         if kb == "default":
             retriever.rebuild_bm25()
 
@@ -185,7 +185,7 @@ async def query_rag(
         kb = knowledge_base or "default"
         result = retriever.query(question, use_reranking, knowledge_base=kb)
 
-        # Extract detailed sources
+        # 提取详细来源
         sources = []
         for i, doc in enumerate(result['source_documents'][:5], 1):
             source_info = {
