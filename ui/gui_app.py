@@ -189,7 +189,7 @@ def main():
     """主应用入口"""
     # 页面配置
     st.set_page_config(
-        page_title="RAG RCA Chatbot",
+        page_title="RAG Chatbot",
         page_icon="🔧",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -264,7 +264,7 @@ def main():
         st.session_state.connection_checked = True
 
     # 页面标题
-    st.title("🔧 RAG RCA Chatbot - 本地根因分析助手")
+    st.title("🔧 RAG Chatbot - 智能文档问答系统")
     st.markdown("基于本地文档的智能问答系统 | 支持混合检索 + 流式输出")
     st.divider()
 
@@ -273,7 +273,7 @@ def main():
         st.markdown("""
         <div style="text-align: center; padding: 10px 0;">
             <h2>🔧 RAG RCA Chatbot</h2>
-            <p style="color: #888; font-size: 14px;">本地根因分析助手</p>
+            <p style="color: #888; font-size: 14px;">智能文档问答系统</p>
         </div>
         """, unsafe_allow_html=True)
 

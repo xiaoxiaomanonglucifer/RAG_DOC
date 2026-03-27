@@ -44,16 +44,16 @@ class Settings(BaseSettings):
     RERANKER_MODEL: str = "BAAI/bge-reranker-base"
 
     # ============================================================
-    # RETRIEVAL SETTINGS - MAXIMIZED FOR 14B CAPABILITIES
+    # RETRIEVAL SETTINGS - OPTIMIZED FOR ACADEMIC DOCUMENTS
     # ============================================================
 
-    # Chunking: Smaller chunks with high overlap for RCA form documents
-    CHUNK_SIZE: int = 800            # Balanced for RCA content
-    CHUNK_OVERLAP: int = 200          # Overlap to prevent splitting content
+    # Chunking: Optimized for academic papers and course materials
+    CHUNK_SIZE: int = 1000           # Larger chunks for academic content
+    CHUNK_OVERLAP: int = 200         # Overlap to prevent splitting content
 
-    # RCA-specific settings
-    EXTRACT_TABLES: bool = False      # Disable table extraction for RCA forms (creates garbage)
-    PREPEND_CONTEXT: bool = True      # Prepend AR# and title to each chunk
+    # Academic document settings
+    EXTRACT_TABLES: bool = True       # Enable table extraction for academic papers
+    PREPEND_CONTEXT: bool = False     # Don't prepend artificial context
 
     # Retrieval: Optimized for completeness
     TOP_K: int = 15                   # More chunks for comprehensive answers
@@ -89,11 +89,11 @@ Path(settings.PROCESSED_DIR).mkdir(exist_ok=True)
 Path(settings.CHROMA_DIR).mkdir(exist_ok=True)
 
 # ============================================================
-# PROMPT TEMPLATE - OPTIMIZED FOR RCA DOCUMENTS
+# PROMPT TEMPLATE - OPTIMIZED FOR ACADEMIC DOCUMENTS
 # ============================================================
-RAG_PROMPT_TEMPLATE = """You are a Root Cause Analysis (RCA) expert assistant. Your task is to provide COMPLETE and ACCURATE answers based ONLY on the provided context.
+RAG_PROMPT_TEMPLATE = """You are an academic research assistant. Your task is to provide comprehensive and accurate answers based ONLY on the provided context from academic documents, course materials, and research papers.
 
-=== CONTEXT FROM RCA DOCUMENTS ===
+=== CONTEXT FROM ACADEMIC DOCUMENTS ===
 {context}
 === END CONTEXT ===
 
@@ -103,15 +103,15 @@ CRITICAL INSTRUCTIONS:
 1. READ ALL CONTEXT CAREFULLY before answering - do not skip any section
 2. Provide COMPLETE information - include ALL relevant details found in the context
 3. Use ONLY information from the context above - never make assumptions or add external knowledge
-4. Add inline citations after each fact: *(AR# xxxxx)* or *(filename)*
-   Example: "Motor failed due to bearing overheat *(AR# 114628)*. Temperature reached 100°C *(AR# 114628)*."
+4. Add inline citations after each fact: *(source: filename)* or *(document name)*
+   Example: "The method shows 95% accuracy *(source: research_paper.pdf)*. The sample size was 1000 participants *(source: study_data.xlsx)*."
 
 ANSWER FORMAT:
-- For "what happened" questions: Describe the full chronology with dates/times
-- For "root cause" questions: List ALL contributing factors and the primary root cause
-- For "what actions" questions: Include responsible persons, deadlines, and status
-- For technical questions: Include exact values, equipment tags, parameters
+- For "what is" questions: Provide clear definitions and explanations
+- For "how to" questions: Give step-by-step procedures
+- For "analysis" questions: Include data, results, and interpretations
+- For comparison questions: Highlight similarities and differences
 
-If information is not found, say: "Informasi tidak ditemukan dalam dokumen yang tersedia."
+If information is not found, say: "Information not found in the provided documents."
 
 ANSWER:"""

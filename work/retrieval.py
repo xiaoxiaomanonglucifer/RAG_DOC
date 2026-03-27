@@ -27,31 +27,28 @@ class HybridRetriever:
         """Smart query expansion for comprehensive retrieval
 
         Handles:
-        - AR# number queries: Extract number and search by content
+        - Document title queries: Extract and search by title
         - Table/structured data queries: Boost actual data tables
         - Structural queries (categories/groups): Boost table of contents
         """
         queries = [question]
         question_lower = question.lower()
 
-        # Detect AR# queries and expand with content-based search
-        ar_patterns = [
-            r'AR[#\s]*(\d+)',           # AR# 114628, AR 114628
-            r'ar[#\s]*(\d+)',           # ar# 114628
-            r'(EPR-F\d+-\d+-\d+-\d+)',  # EPR-F2421-2023-06-1
-            r'(OPR-F\d+-\d+-\d+-\d+)',  # OPR format
+        # Detect document title queries and expand with content-based search
+        title_patterns = [
+            r'title[:\s]*(["''][^"'']*?["''])',  # title: "Research Paper"
+            r'document[:\s]*(["''][^"'']*?["''])',  # document: "Study"
+            r'paper[:\s]*(["''][^"'']*?["''])',  # paper: "Analysis"
         ]
 
-        for pattern in ar_patterns:
+        for pattern in title_patterns:
             match = re.search(pattern, question, re.IGNORECASE)
             if match:
-                ar_num = match.group(1)
+                title = match.group(1).strip('"\'')
                 # Add filename-based search
-                queries.append(f"{ar_num}.pdf")
-                # Add content search without AR# prefix
-                clean_query = re.sub(r'AR[#\s]*\d+', '', question, flags=re.IGNORECASE).strip()
-                if clean_query and len(clean_query) > 5:
-                    queries.append(clean_query)
+                queries.append(f"filename contains {title}")
+                # Add title metadata search
+                queries.append(f"title: {title}")
                 break
 
         # Detect tabular/structured data queries
@@ -201,12 +198,12 @@ class HybridRetriever:
             context_parts = []
             for i, doc in enumerate(filtered_docs, 1):
                 source = doc.metadata.get('filename', 'Unknown')
-                ar_num = doc.metadata.get('ar_number', '')
+                title = doc.metadata.get('title', '')
                 page = doc.metadata.get('page', '')
 
                 # Clear header for easy LLM parsing
-                if ar_num:
-                    header = f"[Document {i}: AR# {ar_num} - {source}]"
+                if title:
+                    header = f"[Document {i}: {title} - {source}]"
                 else:
                     header = f"[Document {i}: {source}]"
                 if page:

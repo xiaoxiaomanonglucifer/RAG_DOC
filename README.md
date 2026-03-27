@@ -1,4 +1,4 @@
-# RAG Automation - 智能文档问答系统
+# RAG Academic Assistant - 智能学术文档问答系统
 
 基于检索增强生成(RAG)的学术文档智能问答系统，专为大学课程材料、学术论文和技术文档设计。
 
@@ -13,6 +13,7 @@
 - **环境变量配置**：灵活的数据目录配置
 - **API接口**：提供完整的RESTful API接口
 - **Web界面**：基于Streamlit的直观用户界面
+- **学术元数据**：自动提取标题、作者、摘要等学术信息
 
 ## 🛠️ 技术栈
 
@@ -154,7 +155,7 @@ LLM_MODEL = "qwen2.5:7b"                    # 大语言模型
 RERANKER_MODEL = "BAAI/bge-reranker-base"     # 重排序模型
 
 # 检索配置
-CHUNK_SIZE = 800               # 文档分块大小
+CHUNK_SIZE = 1000               # 文档分块大小
 CHUNK_OVERLAP = 200           # 分块重叠
 TOP_K = 15                    # 返回结果数量
 SEMANTIC_WEIGHT = 0.55         # 语义搜索权重
